@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sistema de Voto Electrónico Estudiantil</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ==========================================================================
+       Encabezado Principal
+       ========================================================================== -->
+  <header class="main-header">
+    <div class="header-title-container">
+      <span class="header-icon">☑️</span>
+      <h1 class="header-title" id="header-system-title">
+        Elecciones Estudiantiles 2026 - IE 23014 "ENRIQUE FRACCHIA"
+      </h1>
+    </div>
+
+    <div class="header-status-badge" id="header-status-badge" onclick="openAdminLoginModal()">
+      <span class="status-dot online" id="header-status-dot"></span>
+      <span id="header-status-text">Google Sheets Activo</span>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       Contenedor de Vistas
+       ========================================================================== -->
+  <main class="main-container">
+
+    <!-- VISTA 1: INICIO (HOME) -->
+    <section class="view-section active" id="view-home">
+      <div class="home-card">
+        <img class="school-insignia" id="home-school-insignia" src="" alt="Insignia Institucional">
+        
+        <h2 class="home-title">Bienvenido al Sistema Electoral</h2>
+        <p class="home-subtitle">Seleccione el modo de ingreso de acuerdo a su rol.</p>
+
+        <div class="role-buttons-grid">
+          <!-- Botón Votar -->
+          <button class="btn-role btn-role-votar" onclick="showSelectMesaView()">
+            <svg fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 14H7v-2h4v2zm0-4H7v-2h4v2zm0-4H7V7h4v2zm6 8h-4v-2h4v2zm0-4h-4v-2h4v2zm0-4h-4V7h4v2z"/>
+            </svg>
+            <span>VOTAR</span>
+          </button>
+
+          <!-- Botón Administrador -->
+          <button class="btn-role btn-role-admin" onclick="openAdminLoginModal()">
+            <svg fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 6c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 12.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+            </svg>
+            <span>ADMINISTRADOR</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA 2: SELECTOR DE MESA DE VOTACIÓN -->
+    <section class="view-section" id="view-select-mesa">
+      <div class="select-mesa-card">
+        <div class="select-mesa-header">
+          <div class="mesa-title-icon">
+            <span>🔢</span>
+            <h2>Seleccione su Mesa de Votación</h2>
+          </div>
+          <button class="btn-home-icon" onclick="showHomeView()" title="Volver al inicio">
+            🏠
+          </button>
+        </div>
+
+        <div class="mesas-grid" id="mesas-selection-grid">
+          <!-- Mesas dinámicas inyectadas por JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA 3: DESBLOQUEO DE MESA (PATRÓN POR JURADO) -->
+    <section class="view-section" id="view-unlock-mesa">
+      <div class="pattern-card">
+        <div class="pattern-top-nav">
+          <button class="btn-back" onclick="showSelectMesaView()" title="Regresar a mesas">
+            ←
+          </button>
+        </div>
+
+        <h2 class="pattern-title">Desbloqueo de Mesa</h2>
+        <p class="pattern-subtitle" id="unlock-mesa-subtitle">Mesa 1</p>
+
+        <!-- Widget de Patrón 3x3 -->
+        <div class="pattern-container" id="pattern-container-unlock">
+          <!-- Canvas y puntos generados por PatternLock -->
+        </div>
+
+        <p class="pattern-hint">Dibuje el patrón para habilitar cédula</p>
+      </div>
+    </section>
+
+    <!-- VISTA 4: CÉDULA DE SUFRAGIO ELECTRÓNICA -->
+    <section class="view-section" id="view-cedula">
+      <div class="cedula-wrapper">
+        <div class="cedula-header">
+          <div>
+            <h2 class="cedula-main-title">Cédula de Sufragio Electrónica</h2>
+            <p class="cedula-subtitle">Seleccione UNA sola opción.</p>
+          </div>
+          <span class="cedula-mesa-badge" id="cedula-mesa-badge">MESA 1</span>
+        </div>
+
+        <div class="cedula-body">
+          <div class="ballot-cards-grid" id="ballot-cards-grid">
+            <!-- Candidatos renderizados dinámicamente -->
+          </div>
+
+          <button class="btn-cancel-vote" onclick="openMesaVoting(AppState.currentMesa)">
+            Cancelar Votación
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA 5: PANEL DE CONTROL ADMINISTRATIVO -->
+    <section class="view-section" id="view-admin">
+      <div class="admin-wrapper">
+        <div class="admin-top-bar">
+          <h2 class="admin-main-title">Panel de Control</h2>
+          <button class="btn-exit-admin" onclick="exitAdminPanel()">
+            <span>🚪</span> Salir
+          </button>
+        </div>
+
+        <!-- Pestañas del Panel -->
+        <div class="admin-tabs">
+          <button class="admin-tab-btn active" data-tab="config" onclick="switchAdminTab('config')">
+            ⚙️ Configuración
+          </button>
+          <button class="admin-tab-btn" data-tab="resultados" onclick="switchAdminTab('resultados')">
+            🌐 Resultados y Control
+          </button>
+          <button class="admin-tab-btn" data-tab="gas" onclick="switchAdminTab('gas')">
+            &lt;/&gt; Código GAS & Setup
+          </button>
+        </div>
+
+        <!-- TAB 1: CONFIGURACIÓN -->
+        <div class="admin-tab-content active" id="tab-content-config">
+          <div class="config-grid">
+            
+            <!-- Columna Izquierda: Parámetros Generales -->
+            <div class="panel-card">
+              <div class="card-section-header">
+                <h3 class="card-section-title">⚙️ Parámetros Generales</h3>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Título del Sistema</label>
+                <input type="text" class="form-input" id="admin-input-title" placeholder="Ej: Elecciones Estudiantiles 2026">
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Insignia Institucional (PNG/JPG)</label>
+                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                  <input type="file" id="admin-input-insignia" accept="image/png, image/jpeg" style="display: none;" onchange="handleInsigniaUpload(event)">
+                  <button type="button" class="btn-secondary" style="width: auto; padding: 8px 14px; font-size: 0.85rem;" onclick="document.getElementById('admin-input-insignia').click()">
+                    Seleccionar archivo
+                  </button>
+                  <button type="button" class="btn-icon delete" style="border: 1px solid #FECACA; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;" onclick="handleRemoveInsignia()" title="Restablecer escudo predeterminado">
+                    🗑️ Quitar
+                  </button>
+                </div>
+                <p class="form-hint">Se mostrará en la página de inicio (Se ajustará a 300×300px).</p>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Total de Mesas (1-10)</label>
+                <input type="number" class="form-input" id="admin-input-tables" min="1" max="10" value="6">
+              </div>
+
+              <button class="btn-blue-action" onclick="handleSaveGeneralConfig()">
+                Guardar Configuración General
+              </button>
+
+              <!-- Sección Patrones de Desbloqueo -->
+              <div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #F1F5F9;">
+                <h4 style="font-size: 0.95rem; font-weight: 700; color: #0F172A; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                  🔒 Patrones de Desbloqueo
+                </h4>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <select class="form-input" id="config-select-mesa" style="flex: 1;">
+                    <!-- Opciones de Mesas generadas por JS -->
+                  </select>
+                  <button type="button" class="btn-primary" style="width: auto; padding: 10px 16px; font-size: 0.88rem;" onclick="openPatternConfigForSelectedMesa()">
+                    ✏️ Configurar
+                  </button>
+                </div>
+                <p class="form-hint">Seleccione una mesa para configurar su patrón de acceso (mínimo 4 puntos).</p>
+              </div>
+            </div>
+
+            <!-- Columna Derecha: Candidatos -->
+            <div class="panel-card">
+              <div class="card-section-header">
+                <h3 class="card-section-title" id="admin-candidates-count">👥 Candidatos (3)</h3>
+                <button class="btn-green-sm" onclick="openNewCandidateModal()">
+                  + Nuevo
+                </button>
+              </div>
+
+              <div class="candidates-list" id="admin-candidates-list">
+                <!-- Tarjetas de candidatos generadas por JS -->
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- TAB 2: RESULTADOS Y CONTROL -->
+        <div class="admin-tab-content" id="tab-content-resultados">
+          <!-- Tarjetas KPI -->
+          <div class="kpi-cards-grid">
+            <div class="kpi-card blue">
+              <div class="kpi-title">Votos Totales Emitidos</div>
+              <div class="kpi-value" id="kpi-total-votes">0</div>
+              <span class="kpi-icon-bg">📥</span>
+            </div>
+
+            <div class="kpi-card green">
+              <div class="kpi-title">Candidato Líder</div>
+              <div class="kpi-value" id="kpi-leader-candidate" style="font-size: 1.25rem;">---</div>
+              <span class="kpi-icon-bg">🏆</span>
+            </div>
+
+            <div class="kpi-card amber">
+              <div class="kpi-title">Mesas Activas</div>
+              <div class="kpi-value" id="kpi-active-tables">6</div>
+              <span class="kpi-icon-bg">▦</span>
+            </div>
+
+            <div class="kpi-card red">
+              <div class="kpi-title">Control de Sistema</div>
+              <button class="btn-danger-reiniciar" onclick="handleResetVotes()">
+                PELIGRO: REINICIAR
+              </button>
+              <span class="kpi-icon-bg">⏻</span>
+            </div>
+          </div>
+
+          <!-- Dos Columnas: Resultados Generales y Matriz por Mesa -->
+          <div class="results-two-columns">
+            <div class="panel-card">
+              <div class="card-section-header">
+                <h3 class="card-section-title">📊 Resultados Generales</h3>
+              </div>
+              <div id="admin-general-results-list">
+                <!-- Barras de porcentaje por candidato -->
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="card-section-header">
+                <h3 class="card-section-title">📋 Matriz de Votos por Mesa</h3>
+                <button class="btn-secondary" style="width: auto; padding: 6px 12px; font-size: 0.8rem;" onclick="handlePrintResults()" title="Imprimir o exportar reporte">
+                  🖨️ Imprimir
+                </button>
+              </div>
+
+              <div class="matrix-table-container">
+                <table class="matrix-table">
+                  <thead id="admin-matrix-thead">
+                    <!-- Encabezados dinámicos -->
+                  </thead>
+                  <tbody id="admin-matrix-tbody">
+                    <!-- Filas dinámicas por mesa -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button class="btn-secondary" style="width: auto; padding: 8px 16px; font-size: 0.88rem;" onclick="initGasSync()">
+              🔄 Actualizar Resultados
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 3: CÓDIGO GAS & SETUP -->
+        <div class="admin-tab-content" id="tab-content-gas">
+          <div class="panel-card">
+            <div class="card-section-header">
+              <h3 class="card-section-title">&lt;/&gt; Vinculación con Google Sheets (Google Apps Script)</h3>
+            </div>
+
+            <div class="gas-setup-box">
+              <div class="form-group">
+                <label class="form-label">URL de la Aplicación Web (Web App URL de Google Apps Script):</label>
+                <div style="display: flex; gap: 8px;">
+                  <input type="url" class="form-input" id="input-gas-url" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+                  <button class="btn-primary" style="width: auto; padding: 10px 18px; white-space: nowrap;" onclick="handleTestAndSaveGasUrl()">
+                    Guardar y Probar
+                  </button>
+                </div>
+                <p class="form-hint">
+                  Esta URL conectará la página en GitHub con su Google Sheet en la nube.
+                </p>
+              </div>
+
+              <div style="display: flex; gap: 10px; margin-top: 14px;">
+                <button class="btn-secondary" style="width: auto; font-size: 0.85rem;" onclick="handleSyncNowWithGas()">
+                  ☁️ Forzar Sincronización Completa
+                </button>
+              </div>
+            </div>
+
+            <h4 style="font-size: 1rem; font-weight: 700; color: #0F172A; margin: 20px 0 10px 0;">
+              Pasos para Desplegar el Backend en Google Drive:
+            </h4>
+            <ol style="font-size: 0.88rem; color: #334155; line-height: 1.6; padding-left: 20px; margin-bottom: 20px;">
+              <li>Cree una hoja de cálculo nueva en blanco en <a href="https://sheets.new" target="_blank" style="color: #2563EB; font-weight: 600;">Google Sheets</a>.</li>
+              <li>Vaya al menú <strong>Extensiones &rarr; Apps Script</strong>.</li>
+              <li>Borre el código de ejemplo y pegue el código del script que figura abajo (o desde el archivo <code>google-apps-script/Code.gs</code>).</li>
+              <li>Haga clic en el botón <strong>Implementar &rarr; Nueva implementación</strong>.</li>
+              <li>Haga clic en el ícono de engranaje ⚙️ y seleccione <strong>Aplicación web</strong>.</li>
+              <li>En <em>"Ejecutar como"</em>: seleccione <strong>Yo (su correo)</strong>.</li>
+              <li>En <em>"Quién tiene acceso"</em>: seleccione <strong>Cualquier usuario (Anyone)</strong>. (¡Muy importante!).</li>
+              <li>Haga clic en <strong>Implementar</strong>, autorice los permisos y copie la <strong>URL de la aplicación web</strong> generada.</li>
+              <li>Pegue la URL en el campo superior de esta pantalla y guarde. <em>¡Listo! El script creará automáticamente las hojas <code>CONFIG</code>, <code>CANDIDATOS</code> y <code>VOTOS</code> si aún no existen.</em></li>
+            </ol>
+
+            <div class="code-container">
+              <button class="btn-copy-code" onclick="handleCopyGasCode()">Copiar Código GAS</button>
+              <pre class="code-pre" id="gas-source-code">/**
+ * SISTEMA DE VOTO ELECTRÓNICO ESTUDIANTIL - GOOGLE APPS SCRIPT
+ * Péguelo en Extensiones -> Apps Script de su Google Sheet
+ */
+const SHEET_CONFIG = "CONFIG";
+const SHEET_CANDIDATOS = "CANDIDATOS";
+const SHEET_VOTOS = "VOTOS";
+
+function doGet(e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    checkAndInitSheets(ss);
+    const action = (e && e.parameter && e.parameter.action) || "getAllData";
+    let result = {};
+
+    switch (action) {
+      case "ping":
+        result = { status: "ok", timestamp: Date.now(), spreadsheetName: ss.getName() };
+        break;
+      case "getConfig":
+        result = { success: true, data: getConfigData(ss) };
+        break;
+      case "getCandidatos":
+        result = { success: true, data: getCandidatosData(ss) };
+        break;
+      case "getVotos":
+      case "getResults":
+        result = { success: true, data: getVotosData(ss) };
+        break;
+      case "getAllData":
+      default:
+        result = {
+          success: true,
+          config: getConfigData(ss),
+          candidatos: getCandidatosData(ss),
+          votos: getVotosData(ss)
+        };
+        break;
+    }
+    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doPost(e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    checkAndInitSheets(ss);
+    let requestData = {};
+    if (e && e.postData && e.postData.contents) {
+      try { requestData = JSON.parse(e.postData.contents); } catch (err) { requestData = e.parameter || {}; }
+    } else if (e && e.parameter) {
+      requestData = e.parameter;
+    }
+
+    const action = requestData.action;
+    let result = {};
+
+    switch (action) {
+      case "vote":
+        result = recordVote(ss, requestData);
+        break;
+      case "saveConfig":
+        result = saveConfigData(ss, requestData.config);
+        break;
+      case "saveCandidatos":
+        result = saveCandidatosData(ss, requestData.candidatos);
+        break;
+      case "resetVotes":
+        result = resetVotesData(ss, requestData.adminPass);
+        break;
+      case "verifyAdmin":
+        result = verifyAdminPassword(ss, requestData.password);
+        break;
+      default:
+        result = { success: false, message: "Acción no reconocida" };
+        break;
+    }
+    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function checkAndInitSheets(ss) {
+  if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 1. CONFIG
+  let sheetConfig = ss.getSheetByName(SHEET_CONFIG);
+  if (!sheetConfig) {
+    sheetConfig = ss.insertSheet(SHEET_CONFIG);
+    sheetConfig.getRange("A1:B1").setValues([["Clave", "Valor"]]).setFontWeight("bold").setBackground("#E2E8F0");
+    const defaultPatterns = JSON.stringify({"1":"03678","2":"67852","3":"85210","4":"21036","5":"0124678","6":"0367852"});
+    const configRows = [
+      ["adminPass", "admin12345"],
+      ["tableCount", 6],
+      ["tablePatterns", defaultPatterns],
+      ["systemTitle", "Elecciones Estudiantiles 2026 - IE 23014 \"ENRIQUE FRACCHIA\""],
+      ["systemInsignia", ""]
+    ];
+    sheetConfig.getRange(2, 1, configRows.length, 2).setValues(configRows);
+  }
+
+  // 2. CANDIDATOS
+  let sheetCandidatos = ss.getSheetByName(SHEET_CANDIDATOS);
+  if (!sheetCandidatos) {
+    sheetCandidatos = ss.insertSheet(SHEET_CANDIDATOS);
+    sheetCandidatos.getRange("A1:C1").setValues([["ID", "Nombre", "ImagenBase64"]]).setFontWeight("bold").setBackground("#E2E8F0");
+    const defaultCandidatos = [
+      ["c386467", "LA VOZ DEL FUTURO", ""],
+      ["c372475", "ARBOL DE LA SABIDURIA", ""],
+      ["c1", "VOTO BLANCO", ""]
+    ];
+    sheetCandidatos.getRange(2, 1, defaultCandidatos.length, 3).setValues(defaultCandidatos);
+  }
+
+  // 3. VOTOS
+  let sheetVotos = ss.getSheetByName(SHEET_VOTOS);
+  if (!sheetVotos) {
+    sheetVotos = ss.insertSheet(SHEET_VOTOS);
+    sheetVotos.getRange("A1:D1").setValues([["Timestamp", "Mesa", "CandidatoID", "Hash"]]).setFontWeight("bold").setBackground("#E2E8F0");
+  }
+}
+
+function getConfigData(ss) {
+  const sheet = ss.getSheetByName(SHEET_CONFIG);
+  if (!sheet) return {};
+  const data = sheet.getDataRange().getValues();
+  const config = {};
+  for (let i = 1; i < data.length; i++) {
+    const key = String(data[i][0]).trim();
+    const val = data[i][1];
+    if (key) {
+      if (key === "tableCount") config[key] = parseInt(val, 10) || 6;
+      else if (key === "tablePatterns") {
+        try { config[key] = typeof val === "string" ? JSON.parse(val) : val; } catch(e) { config[key] = {}; }
+      } else config[key] = val;
+    }
+  }
+  return config;
+}
+
+function saveConfigData(ss, newConfig) {
+  const sheet = ss.getSheetByName(SHEET_CONFIG);
+  if (!sheet || !newConfig) return { success: false };
+  const data = sheet.getDataRange().getValues();
+  const keyMap = {};
+  for (let i = 1; i < data.length; i++) keyMap[String(data[i][0]).trim()] = i + 1;
+  for (let key in newConfig) {
+    let val = newConfig[key];
+    if (key === "tablePatterns" && typeof val !== "string") val = JSON.stringify(val);
+    if (keyMap[key]) sheet.getRange(keyMap[key], 2).setValue(val);
+    else sheet.appendRow([key, val]);
+  }
+  return { success: true };
+}
+
+function getCandidatosData(ss) {
+  const sheet = ss.getSheetByName(SHEET_CANDIDATOS);
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  const c = [];
+  for (let i = 1; i < data.length; i++) {
+    const id = String(data[i][0]).trim();
+    const nombre = String(data[i][1]).trim();
+    if (id && nombre) c.push({ id: id, nombre: nombre, imagenBase64: data[i][2] || "" });
+  }
+  return c;
+}
+
+function saveCandidatosData(ss, candidatos) {
+  const sheet = ss.getSheetByName(SHEET_CANDIDATOS);
+  if (!sheet || !Array.isArray(candidatos)) return { success: false };
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 3).clearContent();
+  if (candidatos.length > 0) {
+    const rows = candidatos.map(c => [c.id, c.nombre, c.imagenBase64 || ""]);
+    sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+  }
+  return { success: true };
+}
+
+function getVotosData(ss) {
+  const sheet = ss.getSheetByName(SHEET_VOTOS);
+  if (!sheet) return [];
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return [];
+  const data = sheet.getRange(2, 1, lastRow - 1, 4).getValues();
+  return data.map(d => ({ timestamp: d[0], mesa: d[1], candidatoId: String(d[2]).trim(), hash: d[3] }));
+}
+
+function recordVote(ss, payload) {
+  const sheet = ss.getSheetByName(SHEET_VOTOS);
+  if (!sheet) return { success: false };
+  const timestamp = Date.now();
+  const rawStr = payload.mesa + "-" + payload.candidatoId + "-" + timestamp;
+  const hash = Utilities.base64Encode(rawStr).toUpperCase().substring(0, 16);
+  sheet.appendRow([timestamp, payload.mesa, payload.candidatoId, hash]);
+  return { success: true, timestamp: timestamp, hash: hash };
+}
+
+function resetVotesData(ss, adminPass) {
+  const config = getConfigData(ss);
+  if (adminPass !== config.adminPass) return { success: false, message: "Clave incorrecta" };
+  const sheet = ss.getSheetByName(SHEET_VOTOS);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 4).clearContent();
+  return { success: true };
+}
+
+function verifyAdminPassword(ss, password) {
+  const config = getConfigData(ss);
+  return { success: (password === config.adminPass) };
+}</pre>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==========================================================================
+       MODALES FLOTANTES
+       ========================================================================== -->
+
+  <!-- MODAL: ACCESO ADMINISTRATIVO -->
+  <div class="modal-overlay" id="modal-admin-login">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Acceso Administrativo</h3>
+        <button class="btn-close-modal" onclick="closeModal('modal-admin-login')">&times;</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Contraseña de Administrador</label>
+        <div class="input-with-icon">
+          <span class="input-icon">🔒</span>
+          <input type="password" class="form-input" id="admin-password-input" placeholder="Ingrese contraseña" onkeydown="if(event.key === 'Enter') handleAdminLoginSubmit()">
+        </div>
+        <p class="form-hint" id="admin-hint-text">Contraseña por defecto simulada: admin12345</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-primary" onclick="handleAdminLoginSubmit()">
+          Ingresar &rarr;
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: NUEVO / EDITAR CANDIDATO -->
+  <div class="modal-overlay" id="modal-candidate">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="width: 32px; height: 32px; border-radius: 50%; background: #DBEAFE; color: #2563EB; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px;">i</div>
+          <h3 class="modal-title" id="candidate-modal-title">Nuevo Candidato</h3>
+        </div>
+        <button class="btn-close-modal" onclick="closeModal('modal-candidate')">&times;</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Nombre / Lista</label>
+        <input type="text" class="form-input" id="candidate-name-input" placeholder="Ej: LA VOZ DEL FUTURO">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Logo/Imagen (Máx 2MB JPG/PNG)</label>
+        <input type="file" class="form-input" id="candidate-image-input" accept="image/png, image/jpeg">
+      </div>
+
+      <div class="modal-actions" style="margin-top: 28px; flex-direction: column;">
+        <button class="btn-secondary" onclick="closeModal('modal-candidate')">
+          Cancelar
+        </button>
+        <button class="btn-success" onclick="handleSaveCandidate()">
+          Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIGURAR PATRÓN DE MESA -->
+  <div class="modal-overlay" id="modal-pattern-config">
+    <div class="modal-card" style="text-align: center; max-width: 420px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+        <button class="btn-back" onclick="closeModal('modal-pattern-config')">←</button>
+        <h3 class="modal-title" id="pattern-config-modal-title">Configurar Patrón Mesa 1</h3>
+        <div style="width: 24px;"></div>
+      </div>
+      <p style="font-size: 0.88rem; color: #64748B; margin-bottom: 20px;">
+        Dibuje el nuevo patrón de acceso para esta mesa
+      </p>
+
+      <div class="pattern-container" id="pattern-container-config">
+        <!-- Canvas generado por PatternLock -->
+      </div>
+
+      <p class="pattern-hint" style="margin-bottom: 20px;">
+        Dibuje el patrón (Mínimo 4 puntos)
+      </p>
+
+      <div style="display: flex; gap: 10px;">
+        <button class="btn-secondary" onclick="clearConfigPattern()">
+          Limpiar
+        </button>
+        <button class="btn-secondary" onclick="closeModal('modal-pattern-config')">
+          Cerrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: VOTO REGISTRADO EXITOSAMENTE -->
+  <div class="modal-overlay" id="modal-success">
+    <div class="success-modal-card">
+      <div class="success-check-circle">✓</div>
+      <h3 class="success-title">Voto Registrado Exitosamente</h3>
+      <p class="success-subtitle">Su voto ha sido emitido de manera segura y secreta.</p>
+      <button class="btn-success" style="padding: 14px 28px; font-size: 1.05rem;" onclick="finishVoting()">
+        Finalizar
+      </button>
+    </div>
+  </div>
+
+  <!-- Contenedor de Alertas Toast -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- ==========================================================================
+       Pie de Página (Footer)
+       ========================================================================== -->
+  <footer class="main-footer">
+    <div class="footer-author">
+      Desarrollado por: <strong>PIP Jesús Oropeza R</strong>
+    </div>
+    <div>
+      Celular:
+      <a class="footer-contact" href="https://wa.me/51971778886" target="_blank" rel="noopener noreferrer">
+        <span>💬</span> 971778886
+      </a>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="gas-client.js"></script>
+  <script src="pattern-lock.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
