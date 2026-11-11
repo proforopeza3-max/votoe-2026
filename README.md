@@ -16,11 +16,12 @@ Desarrollado originalmente para elecciones escolares (Municipios Escolares / Con
 2. **Seguridad con Patrón Gestual de 9 Puntos (Estilo Android):**
    * Cada mesa electoral cuenta con su propio patrón de desbloqueo configurado por el comité electoral.
    * El miembro de mesa (jurado) desbloquea la pantalla para cada votante.
-   * Al finalizar la emisión del voto, el sistema **rebloquea automáticamente la pantalla de inmediato**, garantizando que ningún estudiante pueda votar dos veces ni manipular la terminal.
+   * Al finalizar la emisión del voto, el sistema emite un **sonido positivo en alto volumen**, muestra la confirmación con **cierre automático en 3 segundos** (si no se presiona *Finalizar*) y **rebloquea automáticamente la pantalla de inmediato**, garantizando que ningún estudiante pueda votar dos veces ni manipular la terminal.
 
-3. **Cédula de Sufragio Electrónica Intuitiva:**
-   * Lista de candidatos con fotografía/símbolo a gran resolución.
+3. **Cédula de Sufragio Electrónica y Feedback Auditivo:**
+   * Lista de candidatos con fotografía/símbolo en formato Base64.
    * Voto en blanco incorporado.
+   * Sonido triunfal de confirmación en alto volumen sintetizado mediante *Web Audio API* (funciona 100% offline y sin requerir archivos externos).
    * Interfaz adaptada tanto para pantallas táctiles (tablets/smartphones) como computadoras de escritorio o laptops.
 
 4. **Panel de Control y Escrutinio en Tiempo Real:**

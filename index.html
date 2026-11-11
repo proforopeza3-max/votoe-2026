@@ -160,6 +160,12 @@
               </div>
 
               <div class="form-group">
+                <label class="form-label">Contraseña de Administrador</label>
+                <input type="text" class="form-input" id="admin-input-pass" placeholder="Nueva contraseña de administrador">
+                <p class="form-hint">Clave real para acceder a este panel de control.</p>
+              </div>
+
+              <div class="form-group">
                 <label class="form-label">Insignia Institucional (PNG/JPG)</label>
                 <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
                   <input type="file" id="admin-input-insignia" accept="image/png, image/jpeg" style="display: none;" onchange="handleInsigniaUpload(event)">
@@ -574,7 +580,7 @@ function verifyAdminPassword(ss, password) {
           <span class="input-icon">🔒</span>
           <input type="password" class="form-input" id="admin-password-input" placeholder="Ingrese contraseña" onkeydown="if(event.key === 'Enter') handleAdminLoginSubmit()">
         </div>
-        <p class="form-hint" id="admin-hint-text">Contraseña por defecto simulada: admin12345</p>
+        <p class="form-hint" id="admin-hint-text">Contraseña por defecto simulada: admin123</p>
       </div>
 
       <div class="modal-actions">
@@ -654,8 +660,15 @@ function verifyAdminPassword(ss, password) {
       <div class="success-check-circle">✓</div>
       <h3 class="success-title">Voto Registrado Exitosamente</h3>
       <p class="success-subtitle">Su voto ha sido emitido de manera segura y secreta.</p>
-      <button class="btn-success" style="padding: 14px 28px; font-size: 1.05rem;" onclick="finishVoting()">
-        Finalizar
+      
+      <!-- Barra de cuenta regresiva de 3 segundos -->
+      <div class="autoclose-progress-container">
+        <div class="autoclose-progress-bar" id="autoclose-progress-bar"></div>
+      </div>
+      <p class="autoclose-hint">Cierre automático en <strong id="autoclose-seconds-text">3</strong> segundos...</p>
+
+      <button class="btn-success" id="btn-success-finish" style="padding: 14px 28px; font-size: 1.05rem;" onclick="finishVoting()">
+        Finalizar (3s)
       </button>
     </div>
   </div>

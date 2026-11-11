@@ -53,9 +53,11 @@ const AppState = {
   tempDrawnPattern: ""
 };
 
-// Instancias de PatternLock
+// Instancias de PatternLock y temporizadores
 let unlockPatternLock = null;
 let configPatternLock = null;
+let autoCloseTimer = null;
+let autoCloseInterval = null;
 
 // Inicialización de la Aplicación
 document.addEventListener("DOMContentLoaded", () => {
@@ -63,6 +65,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initUI();
   initPatternLocks();
   initGasSync();
+  convertDefaultIconsToPngBase64();
 });
 
 /**
@@ -193,6 +196,11 @@ function updateSystemBranding() {
   const inputTitle = document.getElementById("admin-input-title");
   if (inputTitle) {
     inputTitle.value = AppState.config.systemTitle || "";
+  }
+
+  const inputPass = document.getElementById("admin-input-pass");
+  if (inputPass) {
+    inputPass.value = AppState.config.adminPass || "admin12345";
   }
 
   const inputTables = document.getElementById("admin-input-tables");
@@ -351,6 +359,102 @@ function renderBallotCards() {
 }
 
 /**
+ * Emite un sonido positivo a alto volumen al registrar el voto
+ */
+function playPositiveVoteSound() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+
+    // Ganancia Master en volumen alto (1.0)
+    const masterGain = ctx.createGain();
+    masterGain.gain.setValueAtTime(1.0, ctx.currentTime);
+    masterGain.connect(ctx.destination);
+
+    // Arpegio armónico mayor ascendente: C5 -> E5 -> G5 -> C6
+    const notes = [
+      { freq: 523.25, time: 0.00, dur: 0.14 }, // Do 5
+      { freq: 659.25, time: 0.11, dur: 0.14 }, // Mi 5
+      { freq: 783.99, time: 0.22, dur: 0.18 }, // Sol 5
+      { freq: 1046.50, time: 0.36, dur: 0.65 } // Do 6 (resonante final)
+    ];
+
+    notes.forEach((note) => {
+      const osc = ctx.createOscillator();
+      const noteGain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(note.freq, ctx.currentTime + note.time);
+
+      const tStart = ctx.currentTime + note.time;
+      const tEnd = tStart + note.dur;
+
+      noteGain.gain.setValueAtTime(0.001, tStart);
+      noteGain.gain.exponentialRampToValueAtTime(0.9, tStart + 0.02);
+      noteGain.gain.exponentialRampToValueAtTime(0.001, tEnd);
+
+      osc.connect(noteGain);
+      noteGain.connect(masterGain);
+
+      osc.start(tStart);
+      osc.stop(tEnd);
+    });
+  } catch (err) {
+    console.warn("No se pudo emitir sonido de voto:", err);
+  }
+}
+
+/**
+ * Control del temporizador de cierre automático (3 segundos)
+ */
+function startAutoCloseSuccessModal() {
+  clearAutoCloseSuccessModal();
+
+  let remaining = 3;
+  const finishBtn = document.getElementById("btn-success-finish");
+  const secondsText = document.getElementById("autoclose-seconds-text");
+  const progressBar = document.getElementById("autoclose-progress-bar");
+
+  if (finishBtn) finishBtn.textContent = `Finalizar (${remaining}s)`;
+  if (secondsText) secondsText.textContent = remaining;
+
+  if (progressBar) {
+    progressBar.style.transition = "none";
+    progressBar.style.width = "100%";
+    setTimeout(() => {
+      progressBar.style.transition = "width 3s linear";
+      progressBar.style.width = "0%";
+    }, 20);
+  }
+
+  autoCloseInterval = setInterval(() => {
+    remaining--;
+    if (secondsText) secondsText.textContent = Math.max(0, remaining);
+    if (finishBtn) finishBtn.textContent = remaining > 0 ? `Finalizar (${remaining}s)` : "Finalizando...";
+  }, 1000);
+
+  autoCloseTimer = setTimeout(() => {
+    clearAutoCloseSuccessModal();
+    finishVoting();
+  }, 3000);
+}
+
+function clearAutoCloseSuccessModal() {
+  if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer);
+    autoCloseTimer = null;
+  }
+  if (autoCloseInterval) {
+    clearInterval(autoCloseInterval);
+    autoCloseInterval = null;
+  }
+}
+
+/**
  * Emite y registra el voto
  */
 async function confirmVote(candidate) {
@@ -378,10 +482,14 @@ async function confirmVote(candidate) {
   saveLocalState();
   renderAdminResults();
 
-  // Abrir modal de éxito de inmediato
-  openModal("modal-success");
+  // 1. Sonido positivo en alto volumen
+  playPositiveVoteSound();
 
-  // Enviar a Google Sheets en segundo plano
+  // 2. Abrir modal de éxito y activar cuenta regresiva de 3 segundos
+  openModal("modal-success");
+  startAutoCloseSuccessModal();
+
+  // 3. Enviar a Google Sheets en segundo plano
   GasClient.recordVote(mesa, candidatoId).then((res) => {
     if (res && res.synced) {
       console.log("Voto sincronizado con Google Sheets exitosamente:", res);
@@ -393,6 +501,7 @@ async function confirmVote(candidate) {
  * Finaliza la votación y regresa de inmediato a la pantalla de bloqueo de la misma mesa
  */
 function finishVoting() {
+  clearAutoCloseSuccessModal();
   closeModal("modal-success");
   // Regresa inmediatamente a la pantalla de patrón de la misma mesa (Imagen 11)
   openMesaVoting(AppState.currentMesa);
@@ -421,9 +530,10 @@ function openAdminLoginModal() {
   if (passInput) {
     passInput.value = "";
   }
+  // La contraseña mostrada es solo un ejemplo simulado, NO la contraseña real
   const hintText = document.getElementById("admin-hint-text");
   if (hintText) {
-    hintText.textContent = `Contraseña por defecto simulada: ${AppState.config.adminPass || "admin12345"}`;
+    hintText.textContent = "Contraseña por defecto simulada: admin123";
   }
   openModal("modal-admin-login");
   setTimeout(() => {
@@ -484,12 +594,15 @@ function switchAdminTab(tabName) {
 
 function handleSaveGeneralConfig() {
   const titleInput = document.getElementById("admin-input-title");
+  const passInput = document.getElementById("admin-input-pass");
   const tablesInput = document.getElementById("admin-input-tables");
 
   const newTitle = titleInput ? titleInput.value.trim() : AppState.config.systemTitle;
+  const newPass = passInput && passInput.value.trim() ? passInput.value.trim() : AppState.config.adminPass;
   const newTables = tablesInput ? Math.max(1, Math.min(10, parseInt(tablesInput.value, 10) || 6)) : 6;
 
   AppState.config.systemTitle = newTitle;
+  AppState.config.adminPass = newPass;
   AppState.config.tableCount = newTables;
 
   // Asegurar patrones para las nuevas mesas
@@ -505,7 +618,7 @@ function handleSaveGeneralConfig() {
   renderMesaSelector();
   renderAdminResults();
 
-  showToast("Configuración general guardada", "success");
+  showToast("Configuración general guardada exitosamente", "success");
 
   // Sincronizar en segundo plano con Google Sheets
   GasClient.saveConfig(AppState.config);
@@ -515,28 +628,30 @@ function handleInsigniaUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
 
-  if (file.size > 2 * 1024 * 1024) {
-    showToast("La imagen excede el límite de 2MB", "error");
+  if (file.size > 5 * 1024 * 1024) {
+    showToast("La imagen excede el límite de 5MB", "error");
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    AppState.config.systemInsignia = e.target.result;
+  showToast("Procesando y convirtiendo insignia a Base64...", "info");
+  fileToPngBase64(file, 300, 300, (base64Png) => {
+    AppState.config.systemInsignia = base64Png;
     saveLocalState();
     updateSystemBranding();
-    showToast("Insignia actualizada correctamente", "success");
+    showToast("Insignia guardada como Base64 en el sistema", "success");
     GasClient.saveConfig(AppState.config);
-  };
-  reader.readAsDataURL(file);
+  });
 }
 
 function handleRemoveInsignia() {
-  AppState.config.systemInsignia = getDefaultInsigniaSvg();
-  saveLocalState();
-  updateSystemBranding();
-  showToast("Insignia restablecida a la predeterminada", "info");
-  GasClient.saveConfig(AppState.config);
+  showToast("Restableciendo insignia predeterminada...", "info");
+  svgToPngBase64(getDefaultInsigniaSvg(), 260, 300).then((pngB64) => {
+    AppState.config.systemInsignia = pngB64;
+    saveLocalState();
+    updateSystemBranding();
+    showToast("Insignia restablecida a la predeterminada", "info");
+    GasClient.saveConfig(AppState.config);
+  });
 }
 
 // Configuración de Patrón por Mesa
@@ -716,26 +831,109 @@ function handleSaveCandidate() {
   const file = fileInput && fileInput.files && fileInput.files[0];
 
   if (file) {
-    if (file.size > 2 * 1024 * 1024) {
-      showToast("La imagen no debe superar los 2MB", "error");
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("La imagen no debe superar los 5MB", "error");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      finalizeCandidateSave(name, e.target.result);
-    };
-    reader.readAsDataURL(file);
+    showToast("Procesando logo del candidato a Base64...", "info");
+    fileToPngBase64(file, 250, 250, (base64Png) => {
+      finalizeCandidateSave(name, base64Png);
+    });
   } else {
-    // Si edita sin cambiar imagen o crea con icono genérico
+    // Si edita sin cambiar imagen o crea con icono genérico en PNG Base64
     let imgBase64 = "";
     if (AppState.editingCandidateId) {
       const existing = AppState.candidatos.find((c) => c.id === AppState.editingCandidateId);
-      imgBase64 = existing ? existing.imagenBase64 : getDefaultCandidateIcon("blanco");
+      imgBase64 = existing ? existing.imagenBase64 : "";
+      finalizeCandidateSave(name, imgBase64);
     } else {
-      imgBase64 = getDefaultCandidateIcon("futuro");
+      svgToPngBase64(getDefaultCandidateIcon("futuro"), 200, 200).then((pngB64) => {
+        finalizeCandidateSave(name, pngB64);
+      });
     }
-    finalizeCandidateSave(name, imgBase64);
   }
+}
+
+/**
+ * Redimensiona y convierte cualquier archivo de imagen (PNG, JPG, WEBP)
+ * en una cadena Base64 PNG optimizada para Sheets (máximo ~20KB a 35KB)
+ */
+function fileToPngBase64(file, maxWidth, maxHeight, callback) {
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    const img = new Image();
+    img.onload = function () {
+      let w = img.width;
+      let h = img.height;
+      const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      const base64Png = canvas.toDataURL("image/png");
+      callback(base64Png);
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+/**
+ * Convierte un SVG en memoria a formato PNG Base64
+ */
+function svgToPngBase64(svgUrl, width, height) {
+  return new Promise((resolve) => {
+    if (!svgUrl || svgUrl.startsWith("data:image/png;base64,")) {
+      resolve(svgUrl);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = function () {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/png"));
+      } catch (e) {
+        resolve(svgUrl);
+      }
+    };
+    img.onerror = function () {
+      resolve(svgUrl);
+    };
+    img.src = svgUrl;
+  });
+}
+
+/**
+ * Convierte las imágenes SVG iniciales por defecto a PNG Base64 nativo
+ * para que cuando se sincronicen con Google Sheets se guarden siempre como PNG Base64
+ */
+function convertDefaultIconsToPngBase64() {
+  if (AppState.config.systemInsignia && AppState.config.systemInsignia.startsWith("data:image/svg")) {
+    svgToPngBase64(AppState.config.systemInsignia, 260, 300).then((pngB64) => {
+      AppState.config.systemInsignia = pngB64;
+      saveLocalState();
+      updateSystemBranding();
+    });
+  }
+
+  AppState.candidatos.forEach((cand, idx) => {
+    if (cand.imagenBase64 && cand.imagenBase64.startsWith("data:image/svg")) {
+      svgToPngBase64(cand.imagenBase64, 200, 200).then((pngB64) => {
+        AppState.candidatos[idx].imagenBase64 = pngB64;
+        saveLocalState();
+        renderCandidatesInAdmin();
+      });
+    }
+  });
 }
 
 function finalizeCandidateSave(nombre, imagenBase64) {
