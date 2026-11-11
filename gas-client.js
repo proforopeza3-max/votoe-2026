@@ -1,31 +1,48 @@
 /**
  * SISTEMA DE VOTO ELECTRÓNICO ESTUDIANTIL
  * Cliente de Sincronización con Google Apps Script (Google Sheets)
- * Compatible con GitHub Pages (CORS, Modo Offline, Sincronización en segundo plano)
+ * Compatible con GitHub Pages (CORS, Redirecciones GAS, Modo Offline, Cuentas Workspace y Gmail)
  */
 
 const GasClient = (function () {
+  // Opcional: Si desea dejar la URL fija para todos los dispositivos en GitHub Pages, péguela aquí:
+  const DEFAULT_GAS_URL = "";
+
   const STORAGE_KEY_GAS_URL = "votoe_gas_url";
   const STORAGE_KEY_OFFLINE_VOTES = "votoe_offline_queue";
 
   // Obtiene la URL configurada de Google Apps Script
   function getGasUrl() {
-    return localStorage.getItem(STORAGE_KEY_GAS_URL) || "";
+    return (localStorage.getItem(STORAGE_KEY_GAS_URL) || DEFAULT_GAS_URL || "").trim();
   }
 
   // Guarda la URL de Google Apps Script
   function setGasUrl(url) {
-    if (url) {
+    if (url && url.trim()) {
       localStorage.setItem(STORAGE_KEY_GAS_URL, url.trim());
     } else {
       localStorage.removeItem(STORAGE_KEY_GAS_URL);
     }
   }
 
-  // Verifica si hay una URL configurada
+  // Verifica si hay una URL válida (soporta cuentas @gmail.com y Google Workspace institucional /a/macros/)
   function isConfigured() {
     const url = getGasUrl();
-    return url && url.startsWith("https://script.google.com/macros/s/");
+    return Boolean(url && url.startsWith("https://script.google.com/"));
+  }
+
+  /**
+   * Parsea de forma segura la respuesta de Google Apps Script
+   */
+  async function parseGasResponse(response) {
+    const text = await response.text();
+    try {
+      const json = JSON.parse(text);
+      return json;
+    } catch (e) {
+      console.error("Respuesta no JSON de Google Apps Script:", text.substring(0, 300));
+      throw new Error("El script de Google devolvió HTML en lugar de JSON. Verifique que esté implementado como 'Cualquier usuario (Anyone)'.");
+    }
   }
 
   /**
@@ -42,14 +59,14 @@ const GasClient = (function () {
 
     const response = await fetch(requestUrl, {
       method: "GET",
-      headers: { "Accept": "application/json" }
+      redirect: "follow"
     });
 
     if (!response.ok) {
       throw new Error(`Error HTTP ${response.status} al consultar Google Sheets`);
     }
 
-    return await response.json();
+    return await parseGasResponse(response);
   }
 
   /**
@@ -69,6 +86,7 @@ const GasClient = (function () {
 
     const response = await fetch(url, {
       method: "POST",
+      redirect: "follow",
       headers: {
         "Content-Type": "text/plain;charset=utf-8"
       },
@@ -79,7 +97,7 @@ const GasClient = (function () {
       throw new Error(`Error HTTP ${response.status} en la sincronización con Google Sheets`);
     }
 
-    return await response.json();
+    return await parseGasResponse(response);
   }
 
   /**
@@ -183,14 +201,14 @@ const GasClient = (function () {
       const pingUrl = `${urlToTest}${separator}action=ping&_t=${Date.now()}`;
       const response = await fetch(pingUrl, {
         method: "GET",
-        headers: { "Accept": "application/json" }
+        redirect: "follow"
       });
 
       if (!response.ok) {
         return { success: false, message: `Error HTTP ${response.status}. Verifique permisos de la Web App.` };
       }
 
-      const data = await response.json();
+      const data = await parseGasResponse(response);
       if (data && data.status === "ok") {
         return { success: true, message: `Conexión exitosa con la hoja: "${data.spreadsheetName || 'Google Sheet'}"` };
       } else {
@@ -221,6 +239,14 @@ const GasClient = (function () {
   }
 
   /**
+   * Guarda tanto configuración como candidatos en Google Sheets
+   */
+  async function saveAll(config, candidatos) {
+    if (!isConfigured()) return { success: false, localOnly: true };
+    return await fetchPost("saveAll", { config: config, candidatos: candidatos });
+  }
+
+  /**
    * Reinicia los votos en Google Sheets
    */
   async function resetVotes(adminPass) {
@@ -246,6 +272,7 @@ const GasClient = (function () {
     getOfflineQueue,
     saveConfig,
     saveCandidatos,
+    saveAll,
     resetVotes,
     loadAllData
   };

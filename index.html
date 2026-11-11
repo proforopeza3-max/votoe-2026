@@ -313,9 +313,12 @@
                 </p>
               </div>
 
-              <div style="display: flex; gap: 10px; margin-top: 14px;">
+              <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px;">
                 <button class="btn-secondary" style="width: auto; font-size: 0.85rem;" onclick="handleSyncNowWithGas()">
-                  ☁️ Forzar Sincronización Completa
+                  ⬇️ Descargar desde Google Sheets
+                </button>
+                <button class="btn-success" style="width: auto; font-size: 0.85rem; padding: 10px 16px;" onclick="handlePushAllToSheets()">
+                  ⬆️ Subir Configuración y Candidatos a Google Sheets
                 </button>
               </div>
             </div>
@@ -383,7 +386,9 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
   try {
+    lock.waitLock(15000);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     checkAndInitSheets(ss);
     let requestData = {};
@@ -406,6 +411,11 @@ function doPost(e) {
       case "saveCandidatos":
         result = saveCandidatosData(ss, requestData.candidatos);
         break;
+      case "saveAll":
+        const resCfg = saveConfigData(ss, requestData.config);
+        const resCand = saveCandidatosData(ss, requestData.candidatos);
+        result = { success: resCfg.success && resCand.success, configResult: resCfg, candidatosResult: resCand };
+        break;
       case "resetVotes":
         result = resetVotesData(ss, requestData.adminPass);
         break;
@@ -416,9 +426,12 @@ function doPost(e) {
         result = { success: false, message: "Acción no reconocida" };
         break;
     }
+    SpreadsheetApp.flush();
     return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.toString(), message: error.toString() })).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    try { lock.releaseLock(); } catch (err) {}
   }
 }
 
@@ -482,13 +495,16 @@ function getConfigData(ss) {
 
 function saveConfigData(ss, newConfig) {
   const sheet = ss.getSheetByName(SHEET_CONFIG);
-  if (!sheet || !newConfig) return { success: false };
+  if (!sheet || !newConfig) return { success: false, message: "Configuración inválida" };
   const data = sheet.getDataRange().getValues();
   const keyMap = {};
   for (let i = 1; i < data.length; i++) keyMap[String(data[i][0]).trim()] = i + 1;
   for (let key in newConfig) {
     let val = newConfig[key];
     if (key === "tablePatterns" && typeof val !== "string") val = JSON.stringify(val);
+    if (typeof val === "string" && val.length > 49500) {
+      return { success: false, message: "El valor de " + key + " excede el límite de 50,000 caracteres de Google Sheets." };
+    }
     if (keyMap[key]) sheet.getRange(keyMap[key], 2).setValue(val);
     else sheet.appendRow([key, val]);
   }
@@ -510,14 +526,25 @@ function getCandidatosData(ss) {
 
 function saveCandidatosData(ss, candidatos) {
   const sheet = ss.getSheetByName(SHEET_CANDIDATOS);
-  if (!sheet || !Array.isArray(candidatos)) return { success: false };
-  const lastRow = sheet.getLastRow();
-  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 3).clearContent();
-  if (candidatos.length > 0) {
-    const rows = candidatos.map(c => [c.id, c.nombre, c.imagenBase64 || ""]);
+  if (!sheet || !Array.isArray(candidatos)) return { success: false, message: "Datos inválidos" };
+  const rows = [];
+  for (let i = 0; i < candidatos.length; i++) {
+    const c = candidatos[i];
+    const imgStr = String(c.imagenBase64 || "");
+    if (imgStr.length > 49500) {
+      return { success: false, message: "La imagen de " + (c.nombre || c.id) + " excede los 50,000 caracteres de Google Sheets." };
+    }
+    rows.push([String(c.id || ""), String(c.nombre || ""), imgStr]);
+  }
+  const oldLastRow = sheet.getLastRow();
+  if (rows.length > 0) {
     sheet.getRange(2, 1, rows.length, 3).setValues(rows);
   }
-  return { success: true };
+  const newLastRow = rows.length + 1;
+  if (oldLastRow > newLastRow) {
+    sheet.getRange(newLastRow + 1, 1, oldLastRow - newLastRow, 3).clearContent();
+  }
+  return { success: true, total: rows.length };
 }
 
 function getVotosData(ss) {
@@ -608,15 +635,18 @@ function verifyAdminPassword(ss, password) {
       </div>
 
       <div class="form-group">
-        <label class="form-label">Logo/Imagen (Máx 2MB JPG/PNG)</label>
-        <input type="file" class="form-input" id="candidate-image-input" accept="image/png, image/jpeg">
+        <label class="form-label">Logo/Imagen (JPG/PNG - Se optimiza automáticamente)</label>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+          <img id="candidate-image-preview" src="" alt="Vista previa" style="width: 56px; height: 56px; border-radius: 8px; object-fit: contain; border: 1px solid #E2E8F0; background: #F8FAFC;">
+          <input type="file" class="form-input" id="candidate-image-input" accept="image/*" onchange="handleCandidateImagePreview(event)">
+        </div>
       </div>
 
       <div class="modal-actions" style="margin-top: 28px; flex-direction: column;">
-        <button class="btn-secondary" onclick="closeModal('modal-candidate')">
+        <button class="btn-secondary" id="btn-cancel-candidate" onclick="closeModal('modal-candidate')">
           Cancelar
         </button>
-        <button class="btn-success" onclick="handleSaveCandidate()">
+        <button class="btn-success" id="btn-save-candidate" onclick="handleSaveCandidate()">
           Guardar
         </button>
       </div>

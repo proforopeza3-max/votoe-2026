@@ -59,13 +59,13 @@ let configPatternLock = null;
 let autoCloseTimer = null;
 let autoCloseInterval = null;
 
-// Inicialización de la Aplicación
-document.addEventListener("DOMContentLoaded", () => {
+// Inicialización de la Aplicación en orden secuencial
+document.addEventListener("DOMContentLoaded", async () => {
   loadLocalState();
+  await convertDefaultIconsToPngBase64();
   initUI();
   initPatternLocks();
-  initGasSync();
-  convertDefaultIconsToPngBase64();
+  await initGasSync();
 });
 
 /**
@@ -145,35 +145,66 @@ function initPatternLocks() {
  * Sincronización inicial con Google Apps Script si está configurado
  */
 async function initGasSync() {
-  if (GasClient.isConfigured()) {
-    showToast("Conectando con Google Sheets...", "info");
-    try {
-      const data = await GasClient.loadAllData();
-      if (data && data.success) {
-        if (data.config && Object.keys(data.config).length > 0) {
-          AppState.config = { ...AppState.config, ...data.config };
-        }
-        if (data.candidatos && Array.isArray(data.candidatos) && data.candidatos.length > 0) {
-          AppState.candidatos = data.candidatos;
-        }
-        if (data.votos && Array.isArray(data.votos)) {
-          AppState.votos = data.votos;
-        }
-        saveLocalState();
-        updateSystemBranding();
-        renderCandidatesInAdmin();
-        renderMesaSelector();
-        renderAdminResults();
-        updateConnectionBadge(true);
-        showToast("Datos sincronizados con Google Sheets", "success");
+  if (!GasClient.isConfigured()) return;
 
-        // Enviar votos offline si hubieran quedado pendientes
-        GasClient.flushOfflineQueue();
+  showToast("Conectando con Google Sheets...", "info");
+  try {
+    const data = await GasClient.loadAllData();
+    if (data && data.success) {
+      let needsPushBack = false;
+
+      // 1. Config desde Sheets
+      if (data.config && Object.keys(data.config).length > 0) {
+        const sheetConfig = { ...data.config };
+        if (!sheetConfig.systemInsignia && AppState.config.systemInsignia) {
+          sheetConfig.systemInsignia = AppState.config.systemInsignia;
+          needsPushBack = true;
+        }
+        AppState.config = { ...AppState.config, ...sheetConfig };
       }
-    } catch (err) {
-      console.warn("No se pudo sincronizar en el arranque con Google Sheets:", err);
-      updateConnectionBadge(false);
+
+      // 2. Candidatos desde Sheets
+      if (data.candidatos && Array.isArray(data.candidatos) && data.candidatos.length > 0) {
+        AppState.candidatos = data.candidatos.map((sc) => {
+          if (!sc.imagenBase64) {
+            const localMatch = AppState.candidatos.find((lc) => lc.id === sc.id);
+            if (localMatch && localMatch.imagenBase64) {
+              needsPushBack = true;
+              return { ...sc, imagenBase64: localMatch.imagenBase64 };
+            }
+          }
+          return sc;
+        });
+      } else if (data.candidatos && data.candidatos.length === 0 && AppState.candidatos.length > 0) {
+        needsPushBack = true;
+      }
+
+      // 3. Votos desde Sheets
+      if (data.votos && Array.isArray(data.votos)) {
+        AppState.votos = data.votos;
+      }
+
+      saveLocalState();
+      updateSystemBranding();
+      renderCandidatesInAdmin();
+      renderMesaSelector();
+      renderAdminResults();
+      updateConnectionBadge(true);
+      showToast("Datos sincronizados con Google Sheets", "success");
+
+      // Si la hoja recién creada tenía celdas de imagen vacías, poblarla con las imágenes PNG Base64 iniciales
+      if (needsPushBack) {
+        await ensureAllImagesFitSheets();
+        await GasClient.saveAll(AppState.config, AppState.candidatos);
+      }
+
+      // Enviar votos offline si hubieran quedado pendientes
+      GasClient.flushOfflineQueue();
     }
+  } catch (err) {
+    console.warn("No se pudo sincronizar en el arranque con Google Sheets:", err);
+    updateConnectionBadge(false);
+    showToast("Aviso: Usando datos locales (No se pudo conectar a Google Sheets)", "warning");
   }
 }
 
@@ -592,7 +623,7 @@ function switchAdminTab(tabName) {
 // CONFIGURACIÓN (ADMIN)
 // ==========================================================================
 
-function handleSaveGeneralConfig() {
+async function handleSaveGeneralConfig() {
   const titleInput = document.getElementById("admin-input-title");
   const passInput = document.getElementById("admin-input-pass");
   const tablesInput = document.getElementById("admin-input-tables");
@@ -613,45 +644,44 @@ function handleSaveGeneralConfig() {
     }
   }
 
+  await ensureAllImagesFitSheets();
   saveLocalState();
   updateSystemBranding();
   renderMesaSelector();
   renderAdminResults();
 
-  showToast("Configuración general guardada exitosamente", "success");
-
-  // Sincronizar en segundo plano con Google Sheets
-  GasClient.saveConfig(AppState.config);
+  await syncConfigWithSheets("Configuración general guardada");
 }
 
 function handleInsigniaUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
 
-  if (file.size > 5 * 1024 * 1024) {
-    showToast("La imagen excede el límite de 5MB", "error");
+  if (file.size > 8 * 1024 * 1024) {
+    showToast("La imagen excede el límite de 8MB", "error");
     return;
   }
 
-  showToast("Procesando y convirtiendo insignia a Base64...", "info");
-  fileToPngBase64(file, 300, 300, (base64Png) => {
-    AppState.config.systemInsignia = base64Png;
-    saveLocalState();
-    updateSystemBranding();
-    showToast("Insignia guardada como Base64 en el sistema", "success");
-    GasClient.saveConfig(AppState.config);
-  });
+  showToast("Optimizando insignia en Base64...", "info");
+  compressImageFileToBase64(file, 260, 40000)
+    .then(async (base64Img) => {
+      AppState.config.systemInsignia = base64Img;
+      saveLocalState();
+      updateSystemBranding();
+      await syncConfigWithSheets("Insignia actualizada y guardada en Base64");
+    })
+    .catch((err) => {
+      showToast("Error al procesar la insignia: " + err.message, "error");
+    });
 }
 
-function handleRemoveInsignia() {
+async function handleRemoveInsignia() {
   showToast("Restableciendo insignia predeterminada...", "info");
-  svgToPngBase64(getDefaultInsigniaSvg(), 260, 300).then((pngB64) => {
-    AppState.config.systemInsignia = pngB64;
-    saveLocalState();
-    updateSystemBranding();
-    showToast("Insignia restablecida a la predeterminada", "info");
-    GasClient.saveConfig(AppState.config);
-  });
+  const pngB64 = await svgToPngBase64(getDefaultInsigniaSvg(), 260, 300);
+  AppState.config.systemInsignia = pngB64;
+  saveLocalState();
+  updateSystemBranding();
+  await syncConfigWithSheets("Insignia restablecida");
 }
 
 // Configuración de Patrón por Mesa
@@ -674,7 +704,7 @@ function openPatternConfigForSelectedMesa() {
   }, 100);
 }
 
-function handleConfigPatternDrawn(patternStr) {
+async function handleConfigPatternDrawn(patternStr) {
   if (patternStr.length < 4) {
     showToast("El patrón debe tener al menos 4 puntos", "warning");
     if (configPatternLock) configPatternLock.setError();
@@ -689,12 +719,11 @@ function handleConfigPatternDrawn(patternStr) {
   AppState.config.tablePatterns[mesaKey] = patternStr;
 
   saveLocalState();
-  GasClient.saveConfig(AppState.config);
+  await syncConfigWithSheets(`Patrón para Mesa ${AppState.configuringMesaForPattern} guardado`);
 
   setTimeout(() => {
     closeModal("modal-pattern-config");
-    showToast(`Patrón para Mesa ${AppState.configuringMesaForPattern} guardado`, "success");
-  }, 400);
+  }, 350);
 }
 
 function clearConfigPattern() {
@@ -790,6 +819,18 @@ function renderCandidatesInAdmin() {
   });
 }
 
+function handleCandidateImagePreview(event) {
+  const file = event.target.files[0];
+  const preview = document.getElementById("candidate-image-preview");
+  if (!file || !preview) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    preview.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
 function openNewCandidateModal() {
   AppState.editingCandidateId = null;
   const title = document.getElementById("candidate-modal-title");
@@ -800,6 +841,9 @@ function openNewCandidateModal() {
 
   const fileInput = document.getElementById("candidate-image-input");
   if (fileInput) fileInput.value = "";
+
+  const preview = document.getElementById("candidate-image-preview");
+  if (preview) preview.src = getDefaultCandidateIcon("futuro");
 
   openModal("modal-candidate");
 }
@@ -815,75 +859,160 @@ function openEditCandidateModal(candidate) {
   const fileInput = document.getElementById("candidate-image-input");
   if (fileInput) fileInput.value = "";
 
+  const preview = document.getElementById("candidate-image-preview");
+  if (preview) preview.src = candidate.imagenBase64 || getDefaultCandidateIcon("blanco");
+
   openModal("modal-candidate");
 }
 
-function handleSaveCandidate() {
+async function handleSaveCandidate() {
   const nameInput = document.getElementById("candidate-name-input");
   const fileInput = document.getElementById("candidate-image-input");
-  const name = nameInput ? nameInput.value.trim() : "";
+  const saveBtn = document.getElementById("btn-save-candidate");
+  const cancelBtn = document.getElementById("btn-cancel-candidate");
 
+  const name = nameInput ? nameInput.value.trim() : "";
   if (!name) {
     showToast("Ingrese el nombre de la lista o candidato", "warning");
     return;
   }
 
   const file = fileInput && fileInput.files && fileInput.files[0];
+  if (file && file.size > 8 * 1024 * 1024) {
+    showToast("La imagen no debe superar los 8MB", "error");
+    return;
+  }
 
-  if (file) {
-    if (file.size > 5 * 1024 * 1024) {
-      showToast("La imagen no debe superar los 5MB", "error");
-      return;
-    }
-    showToast("Procesando logo del candidato a Base64...", "info");
-    fileToPngBase64(file, 250, 250, (base64Png) => {
-      finalizeCandidateSave(name, base64Png);
-    });
-  } else {
-    // Si edita sin cambiar imagen o crea con icono genérico en PNG Base64
+  // Bloquear botón mientras se procesa y sincroniza con Google Sheets
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = GasClient.isConfigured() ? "Guardando en Sheets..." : "Guardando...";
+  }
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  try {
     let imgBase64 = "";
-    if (AppState.editingCandidateId) {
+
+    if (file) {
+      imgBase64 = await compressImageFileToBase64(file, 220, 40000);
+    } else if (AppState.editingCandidateId) {
       const existing = AppState.candidatos.find((c) => c.id === AppState.editingCandidateId);
       imgBase64 = existing ? existing.imagenBase64 : "";
-      finalizeCandidateSave(name, imgBase64);
+      if (imgBase64 && imgBase64.length > 42000) {
+        imgBase64 = await compressDataUrlForSheets(imgBase64, 220, 40000);
+      }
     } else {
-      svgToPngBase64(getDefaultCandidateIcon("futuro"), 200, 200).then((pngB64) => {
-        finalizeCandidateSave(name, pngB64);
-      });
+      imgBase64 = await svgToPngBase64(getDefaultCandidateIcon("futuro"), 200, 200);
     }
+
+    await finalizeCandidateSave(name, imgBase64);
+  } catch (err) {
+    console.error("Error al guardar candidato:", err);
+    showToast("Error al guardar candidato: " + (err.message || "Error inesperado"), "error");
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Guardar";
+    }
+    if (cancelBtn) cancelBtn.disabled = false;
   }
 }
 
 /**
- * Redimensiona y convierte cualquier archivo de imagen (PNG, JPG, WEBP)
- * en una cadena Base64 PNG optimizada para Sheets (máximo ~20KB a 35KB)
+ * Lee un File y lo comprime adaptativamente para caber holgadamente en celdas de Google Sheets (<40,000 chars)
  */
-function fileToPngBase64(file, maxWidth, maxHeight, callback) {
-  const reader = new FileReader();
-  reader.onload = function (e) {
-    const img = new Image();
-    img.onload = function () {
-      let w = img.width;
-      let h = img.height;
-      const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
-      w = Math.round(w * ratio);
-      h = Math.round(h * ratio);
-
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
-      const base64Png = canvas.toDataURL("image/png");
-      callback(base64Png);
+function compressImageFileToBase64(file, maxDim = 220, maxChars = 40000) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async function (e) {
+      try {
+        const compressed = await compressDataUrlForSheets(e.target.result, maxDim, maxChars);
+        resolve(compressed);
+      } catch (err) {
+        reject(err);
+      }
     };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
+    reader.onerror = function () {
+      reject(new Error("No se pudo leer el archivo seleccionado."));
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
- * Convierte un SVG en memoria a formato PNG Base64
+ * Comprime cualquier DataURL (PNG/JPG/WEBP/SVG) garantizando que su longitud sea <= maxChars
+ */
+function compressDataUrlForSheets(dataUrl, maxDim = 220, maxChars = 40000) {
+  return new Promise((resolve, reject) => {
+    if (!dataUrl || typeof dataUrl !== "string") {
+      resolve("");
+      return;
+    }
+
+    if ((dataUrl.startsWith("data:image/png;base64,") || dataUrl.startsWith("data:image/jpeg;base64,")) && dataUrl.length <= maxChars) {
+      resolve(dataUrl);
+      return;
+    }
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = function () {
+      try {
+        let w = img.width || 200;
+        let h = img.height || 200;
+        const ratio = Math.min(maxDim / w, maxDim / h, 1);
+        w = Math.max(1, Math.round(w * ratio));
+        h = Math.max(1, Math.round(h * ratio));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+
+        // 1. Intentar PNG primero (preserva transparencia si es un logo simple)
+        const pngData = canvas.toDataURL("image/png");
+        if (pngData.length <= maxChars) {
+          resolve(pngData);
+          return;
+        }
+
+        // 2. Si el PNG excede maxChars, convertir a JPEG optimizado sobre fondo blanco
+        const qualities = [0.85, 0.72, 0.58, 0.45, 0.35];
+        const scales = [1, 0.75, 0.55];
+
+        for (let s = 0; s < scales.length; s++) {
+          const sw = Math.max(40, Math.round(w * scales[s]));
+          const sh = Math.max(40, Math.round(h * scales[s]));
+          canvas.width = sw;
+          canvas.height = sh;
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, sw, sh);
+          ctx.drawImage(img, 0, 0, sw, sh);
+
+          for (let q = 0; q < qualities.length; q++) {
+            const jpgData = canvas.toDataURL("image/jpeg", qualities[q]);
+            if (jpgData.length <= maxChars) {
+              resolve(jpgData);
+              return;
+            }
+          }
+        }
+
+        resolve(canvas.toDataURL("image/jpeg", 0.3));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = function () {
+      reject(new Error("El formato de imagen no es compatible."));
+    };
+    img.src = dataUrl;
+  });
+}
+
+/**
+ * Convierte un SVG en memoria a formato PNG Base64 optimizado
  */
 function svgToPngBase64(svgUrl, width, height) {
   return new Promise((resolve) => {
@@ -914,55 +1043,120 @@ function svgToPngBase64(svgUrl, width, height) {
 
 /**
  * Convierte las imágenes SVG iniciales por defecto a PNG Base64 nativo
- * para que cuando se sincronicen con Google Sheets se guarden siempre como PNG Base64
  */
-function convertDefaultIconsToPngBase64() {
+async function convertDefaultIconsToPngBase64() {
   if (AppState.config.systemInsignia && AppState.config.systemInsignia.startsWith("data:image/svg")) {
-    svgToPngBase64(AppState.config.systemInsignia, 260, 300).then((pngB64) => {
-      AppState.config.systemInsignia = pngB64;
-      saveLocalState();
-      updateSystemBranding();
-    });
+    AppState.config.systemInsignia = await svgToPngBase64(AppState.config.systemInsignia, 260, 300);
   }
 
-  AppState.candidatos.forEach((cand, idx) => {
+  for (let i = 0; i < AppState.candidatos.length; i++) {
+    const cand = AppState.candidatos[i];
     if (cand.imagenBase64 && cand.imagenBase64.startsWith("data:image/svg")) {
-      svgToPngBase64(cand.imagenBase64, 200, 200).then((pngB64) => {
-        AppState.candidatos[idx].imagenBase64 = pngB64;
-        saveLocalState();
-        renderCandidatesInAdmin();
-      });
+      AppState.candidatos[i].imagenBase64 = await svgToPngBase64(cand.imagenBase64, 200, 200);
     }
-  });
+  }
+  saveLocalState();
 }
 
-function finalizeCandidateSave(nombre, imagenBase64) {
+/**
+ * Garantiza que TODAS las imágenes en memoria cumplan con el límite de Google Sheets (<42,000 caracteres)
+ */
+async function ensureAllImagesFitSheets() {
+  if (AppState.config.systemInsignia && AppState.config.systemInsignia.length > 42000) {
+    AppState.config.systemInsignia = await compressDataUrlForSheets(AppState.config.systemInsignia, 260, 40000);
+  }
+
+  for (let i = 0; i < AppState.candidatos.length; i++) {
+    const img = AppState.candidatos[i].imagenBase64;
+    if (img && img.length > 42000) {
+      AppState.candidatos[i].imagenBase64 = await compressDataUrlForSheets(img, 220, 40000);
+    }
+  }
+}
+
+/**
+ * Sincroniza Configuración con Google Sheets esperando respuesta y mostrando errores reales
+ */
+async function syncConfigWithSheets(localSuccessMsg = "Configuración guardada") {
+  if (!GasClient.isConfigured()) {
+    showToast(`${localSuccessMsg} (Modo Local)`, "success");
+    return true;
+  }
+
+  try {
+    const res = await GasClient.saveConfig(AppState.config);
+    if (res && res.success) {
+      showToast(`${localSuccessMsg} y sincronizado en Google Sheets`, "success");
+      return true;
+    } else {
+      const errMsg = (res && (res.message || res.error)) || "Respuesta inválida del script";
+      showToast(`Error al guardar en Google Sheets: ${errMsg}`, "error");
+      return false;
+    }
+  } catch (err) {
+    showToast(`No se pudo sincronizar con Google Sheets: ${err.message}`, "error");
+    return false;
+  }
+}
+
+/**
+ * Sincroniza Candidatos con Google Sheets esperando respuesta y mostrando errores reales
+ */
+async function syncCandidatosWithSheets(localSuccessMsg = "Candidatos actualizados") {
+  if (!GasClient.isConfigured()) {
+    showToast(`${localSuccessMsg} (Modo Local)`, "success");
+    return true;
+  }
+
+  try {
+    await ensureAllImagesFitSheets();
+    saveLocalState();
+    const res = await GasClient.saveCandidatos(AppState.candidatos);
+    if (res && res.success) {
+      showToast(`${localSuccessMsg} en Google Sheets`, "success");
+      return true;
+    } else {
+      const errMsg = (res && (res.message || res.error)) || "Respuesta inválida del script";
+      showToast(`Error al guardar en Google Sheets: ${errMsg}`, "error");
+      return false;
+    }
+  } catch (err) {
+    showToast(`Error de red al guardar en Google Sheets: ${err.message}`, "error");
+    return false;
+  }
+}
+
+async function finalizeCandidateSave(nombre, imagenBase64) {
+  let actionMsg = "";
   if (AppState.editingCandidateId) {
-    // Editar
     const idx = AppState.candidatos.findIndex((c) => c.id === AppState.editingCandidateId);
     if (idx !== -1) {
       AppState.candidatos[idx].nombre = nombre;
       if (imagenBase64) AppState.candidatos[idx].imagenBase64 = imagenBase64;
     }
-    showToast("Candidato actualizado", "success");
+    actionMsg = "Candidato actualizado";
   } else {
-    // Crear nuevo con ID único
     const newId = "c" + Math.floor(100000 + Math.random() * 900000);
     AppState.candidatos.push({
       id: newId,
       nombre: nombre,
       imagenBase64: imagenBase64
     });
-    showToast("Candidato registrado", "success");
+    actionMsg = "Candidato registrado";
   }
 
   saveLocalState();
   renderCandidatesInAdmin();
-  closeModal("modal-candidate");
-  GasClient.saveCandidatos(AppState.candidatos);
+  renderAdminResults();
+  renderBallotCards();
+
+  const ok = await syncCandidatosWithSheets(actionMsg);
+  if (ok || !GasClient.isConfigured()) {
+    closeModal("modal-candidate");
+  }
 }
 
-function deleteCandidate(candidateId) {
+async function deleteCandidate(candidateId) {
   if (AppState.candidatos.length <= 1) {
     showToast("Debe existir al menos un candidato o voto en blanco", "warning");
     return;
@@ -973,12 +1167,12 @@ function deleteCandidate(candidateId) {
     saveLocalState();
     renderCandidatesInAdmin();
     renderAdminResults();
-    showToast("Candidato eliminado", "info");
-    GasClient.saveCandidatos(AppState.candidatos);
+    renderBallotCards();
+    await syncCandidatosWithSheets("Candidato eliminado");
   }
 }
 
-function moveCandidatePosition(index, direction) {
+async function moveCandidatePosition(index, direction) {
   const targetIndex = index + direction;
   if (targetIndex < 0 || targetIndex >= AppState.candidatos.length) return;
 
@@ -988,7 +1182,8 @@ function moveCandidatePosition(index, direction) {
 
   saveLocalState();
   renderCandidatesInAdmin();
-  GasClient.saveCandidatos(AppState.candidatos);
+  renderBallotCards();
+  await syncCandidatosWithSheets("Orden de candidatos actualizado");
 }
 
 // ==========================================================================
@@ -1190,7 +1385,7 @@ async function handleTestAndSaveGasUrl() {
     updateConnectionBadge(true);
     showToast(res.message, "success");
     // Sincronizar de una vez
-    initGasSync();
+    await initGasSync();
   } else {
     showToast(res.message, "error");
   }
@@ -1201,8 +1396,30 @@ async function handleSyncNowWithGas() {
     showToast("Primero ingrese y guarde la URL de la Web App de Google Apps Script", "warning");
     return;
   }
-  showToast("Sincronizando con Google Sheets...", "info");
+  showToast("Descargando datos desde Google Sheets...", "info");
   await initGasSync();
+}
+
+async function handlePushAllToSheets() {
+  if (!GasClient.isConfigured()) {
+    showToast("Primero ingrese y guarde la URL de la Web App de Google Apps Script", "warning");
+    return;
+  }
+
+  showToast("Subiendo configuración y candidatos a Google Sheets...", "info");
+  try {
+    await ensureAllImagesFitSheets();
+    saveLocalState();
+    const res = await GasClient.saveAll(AppState.config, AppState.candidatos);
+    if (res && res.success) {
+      showToast("Configuración y candidatos guardados en Google Sheets", "success");
+    } else {
+      const msg = (res && (res.message || res.error || res.candidatosResult?.message || res.configResult?.message)) || "Verifique el despliegue en Apps Script";
+      showToast("Error al subir a Google Sheets: " + msg, "error");
+    }
+  } catch (err) {
+    showToast("Error de conexión al subir datos: " + err.message, "error");
+  }
 }
 
 function handleCopyGasCode() {
